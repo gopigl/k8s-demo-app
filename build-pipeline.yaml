@@ -1,0 +1,80 @@
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: 'NPMBuild'
+  displayName: NPM Build
+  jobs:
+  - job: 'NPMInstall'
+    displayName: NPM Install
+    steps:
+    - task: Npm@1
+      inputs:
+        command: 'install'
+
+- stage: CodeScan
+  displayName: 'Sonar Scan'
+  jobs:
+  - job: 'SonarScan'
+    displayName: 'Sonar Scan'
+    steps:
+    - script:
+       echo "SonarQube Code quality is running...."
+       sleep 30
+
+- stage: DockerBuild
+  jobs:
+  - job: DockerBuildTagPush
+    steps:
+    - task: Docker@1
+      displayName: Docker Builld
+      inputs:
+        containerregistrytype: 'Azure Container Registry'
+        azureSubscriptionEndpoint: 'acrserviceconnection'
+        azureContainerRegistry: 'myacr.azurecr.io'
+        command: 'Build an image'
+        dockerFile: '**/Dockerfile'
+        imageName: '$(Build.Repository.Name):$(Build.BuildId)'
+
+    - task: Docker@1
+      displayName: Docker Tag 
+      inputs:
+        containerregistrytype: 'Azure Container Registry'
+        azureSubscriptionEndpoint: 'acrserviceconnection'
+        azureContainerRegistry: 'myacr.azurecr.io'
+        command: 'Tag image'
+        imageName: 'myacr/$(Build.Repository.Name):$(Build.BuildId)'
+    - task: Docker@1
+      displayName: Docker Push
+      inputs:
+        containerregistrytype: 'Azure Container Registry'
+        azureSubscriptionEndpoint: 'acrserviceconnection'
+        azureContainerRegistry: 'myacr.azurecr.io'
+        command: 'Push an image'
+        imageName: 'myacr.azurecr.io/$(Build.Repository.Name):$(Build.BuildId)' 
+
+- stage: K8s_Deploy
+  jobs:
+  - job: 
+    steps:
+    - task: RegExMatchReplace@2
+      inputs:
+        PathToFile: '$(Build.SourcesDirectory)/deployment.yml'
+        RegEx: 'image: sampleimage'
+        ValueToReplace: 'image: myacr.azurecr.io/$(Build.Repository.Name):$(Build.BuildId)'
+     
+    - task: Kubernetes@1
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: 'k8s-demo'
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: '$(Build.SourcesDirectory)/deployment.yml'
+        secretType: 'dockerRegistry'
+        containerRegistryType: 'Azure Container Registry'
+        azureSubscriptionEndpointForSecrets: 'k8sserviceconnection'
+        azureContainerRegistry: 'myacr.azurecr.io'
+        secretName: 'dockerreg'
